@@ -1,6 +1,11 @@
 name: DOC NZ Hut Monitor
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'nz_doc_monitor.py'
+      - '.github/workflows/nz_doc_monitor.yml'
   schedule:
     - cron: '*/20 * * * *'  # Runs every 20 minutes
   workflow_dispatch:
@@ -21,10 +26,11 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install requests cloudscraper
+          pip install "requests>=2.31" "cloudscraper>=1.2.71"
 
       - name: Execute DOC Availability Check
         env:
-          NTFY_TOPIC: 'REDACTED_TOPIC'
+          # Override by setting a repository variable named NTFY_TOPIC
+          # (Settings -> Secrets and variables -> Actions -> Variables).
+          NTFY_TOPIC: ${{ vars.NTFY_TOPIC || 'REDACTED_TOPIC' }}
         run: python nz_doc_monitor.py
-        
