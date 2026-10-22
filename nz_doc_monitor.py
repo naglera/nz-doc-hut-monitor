@@ -75,21 +75,25 @@ START_WINDOW_END = "2027-01-10"
 SEND_DAILY_HEARTBEAT = os.getenv("SEND_HEARTBEAT", "0") == "1"
 
 # Track definitions. Identifiers discovered from the live DOC booking platform.
-#   place_id          : Great Walk place id
-#   nights            : consecutive nights the trip needs
-#   require_full_chain:
-#       True  -> every hut in `ordered_huts` must be free on consecutive
-#                nights, in order (fixed Milford walk)
-#       False -> any single available hut-night in the window qualifies
-#                (Routeburn, where one night is enough)
-#   ordered_huts      : huts in travel order (FacilityId + display name)
+#   place_id     : Great Walk place id
+#   nights       : consecutive nights the trip needs
+#   rule         : how to decide an "opening":
+#       "full_chain"            -> every hut in `ordered_huts` must be free on
+#                                  consecutive nights, in order (fixed Milford)
+#       "any_single_night"      -> any single available hut-night qualifies
+#                                  (Routeburn: one night is enough)
+#       "two_huts_consecutive"  -> both huts in `ordered_huts` free on two
+#                                  consecutive nights, in EITHER order
+#                                  (Kepler: Luxmore + Iris Burn, direction free)
+#   ordered_huts : huts (FacilityId + display name); order is the travel order
+#                  for "full_chain" and ignored for the other rules.
 TRACKS = [
     {
         "key": "milford",
         "name": "Milford Track",
         "place_id": 873,
         "nights": 3,
-        "require_full_chain": True,
+        "rule": "full_chain",
         "ordered_huts": [
             {"facility_id": 2857, "name": "Clinton Hut"},
             {"facility_id": 2859, "name": "Mintaro Hut"},
@@ -101,10 +105,21 @@ TRACKS = [
         "name": "Routeburn Track",
         "place_id": 874,
         "nights": 1,
-        "require_full_chain": False,
+        "rule": "any_single_night",
         "ordered_huts": [
             {"facility_id": 2862, "name": "Routeburn Falls Hut"},
             {"facility_id": 2861, "name": "Lake Mackenzie Hut"},
+        ],
+    },
+    {
+        "key": "kepler",
+        "name": "Kepler Track",
+        "place_id": 872,
+        "nights": 2,
+        "rule": "two_huts_consecutive",
+        "ordered_huts": [
+            {"facility_id": 2855, "name": "Luxmore Hut"},
+            {"facility_id": 2854, "name": "Iris Burn Hut"},
         ],
     },
 ]
@@ -264,7 +279,39 @@ def find_single_night_openings(track: dict, availability: dict) -> list:
   return openings
 
 
-def format_full_chain_message(track: dict, itineraries: list) -> str:
+def find_two_huts_consecutive(track: dict, availability: dict) -> list:
+  """Finds openings where BOTH huts are free on two consecutive nights,
+  in EITHER order (direction doesn't matter).
+
+  For each candidate start date D in the window, checks both orderings:
+    hutA on D + hutB on D+1, and hutB on D + hutA on D+1.
+  """
+  hut_a, hut_b = track["ordered_huts"][0], track["ordered_huts"][1]
+  begin = datetime.strptime(START_WINDOW_BEGIN, "%Y-%m-%d")
+  end = datetime.strptime(START_WINDOW_END, "%Y-%m-%d")
+  itineraries = []
+
+  curr = begin
+  while curr <= end:
+    d1 = curr.strftime("%Y-%m-%d")
+    d2 = (curr + timedelta(days=1)).strftime("%Y-%m-%d")
+    for first, second in ((hut_a, hut_b), (hut_b, hut_a)):
+      b1 = availability.get((first["facility_id"], d1), 0)
+      b2 = availability.get((second["facility_id"], d2), 0)
+      if b1 >= PARTY_SIZE and b2 >= PARTY_SIZE:
+        itineraries.append({
+            "start_date": d1,
+            "schedule": [
+                {"night": 1, "hut": first["name"], "date": d1, "bunks": b1},
+                {"night": 2, "hut": second["name"], "date": d2, "bunks": b2},
+            ],
+        })
+    curr += timedelta(days=1)
+
+  return itineraries
+
+
+
   lines = [
       f"{track['name']}: found {len(itineraries)} full "
       f"{track['nights']}-night opening(s) for {PARTY_SIZE}p:"
@@ -302,18 +349,26 @@ def check_track(scraper: "cloudscraper.CloudScraper", track: dict):
 
   availability = fetch_track_availability(scraper, track, request_nights)
 
-  if track["require_full_chain"]:
+  rule = track["rule"]
+  title = f"🚨 {track['name'].upper()} OPENING FOUND!"
+
+  if rule == "full_chain":
     itineraries = find_full_chain_itineraries(track, availability)
     if itineraries:
       print(f"   🚨 {track['name']}: {len(itineraries)} full-chain itinerary(ies)!")
-      return (f"🚨 {track['name'].upper()} OPENING FOUND!",
-              format_full_chain_message(track, itineraries))
-  else:
+      return (title, format_full_chain_message(track, itineraries))
+  elif rule == "two_huts_consecutive":
+    itineraries = find_two_huts_consecutive(track, availability)
+    if itineraries:
+      print(f"   🚨 {track['name']}: {len(itineraries)} two-hut opening(s)!")
+      return (title, format_full_chain_message(track, itineraries))
+  elif rule == "any_single_night":
     openings = find_single_night_openings(track, availability)
     if openings:
       print(f"   🚨 {track['name']}: {len(openings)} single-night opening(s)!")
-      return (f"🚨 {track['name'].upper()} OPENING FOUND!",
-              format_single_night_message(track, openings))
+      return (title, format_single_night_message(track, openings))
+  else:
+    print(f"   ⚠ {track['name']}: unknown rule {rule!r}; skipping.")
 
   print(f"   ℹ {track['name']}: no qualifying openings.")
   return None
@@ -334,7 +389,8 @@ def maybe_send_daily_heartbeat(scraper, any_hits: bool) -> None:
       f"DOC monitor is alive ✅\n"
       f"Daily check OK — {status}.\n"
       f"Window {START_WINDOW_BEGIN} to {START_WINDOW_END}, party of {PARTY_SIZE}.\n"
-      f"Tracks: Milford (3-night chain), Routeburn (1 night)."
+      f"Tracks: Milford (3-night chain), Routeburn (1 night), "
+      f"Kepler (Luxmore + Iris Burn, 2 consecutive nights)."
   )
   send_push_notification(
       "DOC monitor daily check", msg, scraper,
