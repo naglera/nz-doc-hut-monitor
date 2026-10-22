@@ -1,0 +1,30 @@
+name: DOC NZ Hut Monitor
+
+on:
+  schedule:
+    - cron: '*/20 * * * *'  # Runs every 20 minutes
+  workflow_dispatch:
+
+jobs:
+  check-doc-huts:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests cloudscraper
+
+      - name: Execute DOC Availability Check
+        env:
+          NTFY_TOPIC: 'REDACTED_TOPIC'
+        run: python nz_doc_monitor.py
+        
