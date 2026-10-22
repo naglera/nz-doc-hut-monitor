@@ -7,8 +7,14 @@ on:
       - 'nz_doc_monitor.py'
       - '.github/workflows/nz_doc_monitor.yml'
   schedule:
-    - cron: '*/20 * * * *'  # Runs every 20 minutes
+    - cron: '*/20 * * * *'   # availability check, every 20 minutes
+    - cron: '0 19 * * *'     # daily heartbeat (19:00 UTC ~= 08:00 NZDT)
   workflow_dispatch:
+    inputs:
+      send_heartbeat:
+        description: 'Send a heartbeat notification this run'
+        type: boolean
+        default: false
 
 jobs:
   check-doc-huts:
@@ -33,4 +39,6 @@ jobs:
           # Override by setting a repository variable named NTFY_TOPIC
           # (Settings -> Secrets and variables -> Actions -> Variables).
           NTFY_TOPIC: ${{ vars.NTFY_TOPIC || 'REDACTED_TOPIC' }}
+          # Send a heartbeat only on the daily cron or when manually requested.
+          SEND_HEARTBEAT: ${{ (github.event.schedule == '0 19 * * *' || github.event.inputs.send_heartbeat == 'true') && '1' || '0' }}
         run: python nz_doc_monitor.py

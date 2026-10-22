@@ -1,33 +1,35 @@
 """DOC Great Walk hut-availability monitor (Milford + Routeburn).
 
 Polls the New Zealand Department of Conservation (DOC) booking platform
-(Tyler Technologies "RDR" reservation system that powers
-https://bookings.doc.govt.nz) and sends a push notification via ntfy.sh when a
-target trip becomes bookable.
+(Tyler Technologies "RDR" reservation system behind https://bookings.doc.govt.nz)
+and sends a push notification via ntfy.sh when a target trip becomes bookable.
 
 Two tracks are monitored with different rules:
 
   * Milford Track  - a *fixed* 3-night Great Walk. All three huts must be
     available on consecutive nights, in travel order:
         Clinton Hut -> Mintaro Hut -> Dumpling Hut
-  * Routeburn Track - a single night in any Routeburn hut is enough.
+  * Routeburn Track - a single night in either Routeburn hut is enough.
 
 Shared search window: arrival between 2026-12-28 and 2027-01-10 (inclusive).
 
 ----------------------------------------------------------------------------
-API contract (reverse-engineered from the live booking SPA):
+API contract (verified against the live site by capturing the real request the
+booking SPA sends via its "Search" button):
 
   POST {API_BASE}search/greatwalkplacefacility
   Content-Type: application/json
   Body: {
-      "accomodation": <AccomodationId>,   # "Hut" accommodation id for the track
+      "accomodation": "",                 # MUST be empty string -> returns all
+                                          #   huts/campsites for the place.
+                                          #   A numeric id yields an empty result.
       "placeId": <PlaceId>,               # the Great Walk place id
       "customerClassificationId": 0,      # 0 = public / default
-      "arrivalDate": "YYYY-MM-DD",
-      "nights": <int>
+      "arrivalDate": "YYYY-MM-DD",        # first day of the returned grid
+      "nights": <int>                     # width of the returned grid (days)
   }
   ->  {
-        "GreatWalkFacilityHeaderData": {...} | null,
+        "GreatWalkFacilityHeaderData": [ {"FullDate": "...T00:00:00", ...}, ... ],
         "GreatWalkFacilityData": [
           {
             "FacilityId": <int>,
@@ -66,22 +68,26 @@ PARTY_SIZE = 2
 START_WINDOW_BEGIN = "2026-12-28"
 START_WINDOW_END = "2027-01-10"
 
+# Send a "still watching" heartbeat notification. On ephemeral CI runners a
+# local state file does not persist between runs, so cadence is controlled by
+# *when* this runs: the workflow enables it on a once-a-day schedule only.
+# Set env SEND_HEARTBEAT=1 to send a heartbeat this run, 0 to skip.
+SEND_DAILY_HEARTBEAT = os.getenv("SEND_HEARTBEAT", "0") == "1"
+
 # Track definitions. Identifiers discovered from the live DOC booking platform.
 #   place_id          : Great Walk place id
-#   accommodation_id  : "Hut" accommodation id used by the availability POST
-#   nights            : how many consecutive nights the trip needs
+#   nights            : consecutive nights the trip needs
 #   require_full_chain:
 #       True  -> every hut in `ordered_huts` must be free on consecutive
-#                nights, in order (used for the fixed Milford walk)
+#                nights, in order (fixed Milford walk)
 #       False -> any single available hut-night in the window qualifies
-#                (used for Routeburn, where one night is enough)
+#                (Routeburn, where one night is enough)
 #   ordered_huts      : huts in travel order (FacilityId + display name)
 TRACKS = [
     {
         "key": "milford",
         "name": "Milford Track",
         "place_id": 873,
-        "accommodation_id": 2857,
         "nights": 3,
         "require_full_chain": True,
         "ordered_huts": [
@@ -94,7 +100,6 @@ TRACKS = [
         "key": "routeburn",
         "name": "Routeburn Track",
         "place_id": 874,
-        "accommodation_id": 2861,
         "nights": 1,
         "require_full_chain": False,
         "ordered_huts": [
@@ -108,7 +113,6 @@ NTFY_TOPIC = os.getenv("NTFY_TOPIC", "REDACTED_TOPIC")
 
 BOOKING_URL = "https://bookings.doc.govt.nz/Web/Default.aspx#!greatwalk-result"
 
-# Headers that make the request look like it came from the booking site.
 REQUEST_HEADERS = {
     "Accept": "application/json",
     "Content-Type": "application/json",
@@ -117,25 +121,39 @@ REQUEST_HEADERS = {
 }
 
 
+def _ascii_header(value: str) -> str:
+  """HTTP header values must be latin-1 safe; drop any non-latin-1 chars.
+
+  ntfy renders emoji from the `Tags` field, so the human-facing title stays
+  readable without needing emoji in the (latin-1-only) Title header.
+  """
+  return value.encode("latin-1", "ignore").decode("latin-1").strip() or "DOC monitor"
+
+
 def send_push_notification(
-    title: str, message: str, scraper: "cloudscraper.CloudScraper"
+    title: str, message: str, scraper: "cloudscraper.CloudScraper",
+    priority: str = "high", tags: str = "rotating_light,mountain"
 ) -> None:
-  """Sends a push notification via ntfy.sh."""
+  """Sends a push notification via ntfy.sh.
+
+  Title/Priority/Tags/Click are HTTP headers (latin-1 only); the message body
+  is sent as UTF-8 so emoji there render fine.
+  """
   endpoint = f"https://ntfy.sh/{NTFY_TOPIC}"
   try:
     response = scraper.post(
         endpoint,
         data=message.encode("utf-8"),
         headers={
-            "Title": title,
-            "Priority": "high",
-            "Tags": "rotating_light,mountain",
+            "Title": _ascii_header(title),
+            "Priority": priority,
+            "Tags": tags,
             "Click": BOOKING_URL,
         },
         timeout=10,
     )
     if response.status_code == 200:
-      print("📲 Push notification delivered!")
+      print(f"📲 Notification delivered: {title}")
     else:
       print(f"⚠ Notification delivery failed: {response.status_code}")
   except Exception as e:  # noqa: BLE001 - never let notification errors crash the run
@@ -145,10 +163,14 @@ def send_push_notification(
 def fetch_track_availability(
     scraper: "cloudscraper.CloudScraper", track: dict, request_nights: int
 ) -> dict:
-  """Fetches bookable (facility_id, 'YYYY-MM-DD') -> free-bunk map for a track."""
+  """Fetches bookable (facility_id, 'YYYY-MM-DD') -> free-bunk map for a track.
+
+  Note: `accomodation` MUST be an empty string; a numeric id makes the API
+  return an empty result set (verified against the live booking site).
+  """
   url = f"{API_BASE}search/greatwalkplacefacility"
   body = {
-      "accomodation": track["accommodation_id"],
+      "accomodation": "",
       "placeId": track["place_id"],
       "customerClassificationId": CUSTOMER_CLASSIFICATION_ID,
       "arrivalDate": START_WINDOW_BEGIN,
@@ -157,8 +179,7 @@ def fetch_track_availability(
 
   print(
       f"📡 {track['name']}: querying place {track['place_id']} "
-      f"(accommodation {track['accommodation_id']}, {request_nights} nights "
-      f"from {START_WINDOW_BEGIN})..."
+      f"({request_nights}-day grid from {START_WINDOW_BEGIN})..."
   )
 
   try:
@@ -237,11 +258,7 @@ def find_single_night_openings(track: dict, availability: dict) -> list:
         continue
       night = datetime.strptime(date_str, "%Y-%m-%d")
       if begin <= night <= end and bunks >= PARTY_SIZE:
-        openings.append({
-            "date": date_str,
-            "hut": hut["name"],
-            "bunks": bunks,
-        })
+        openings.append({"date": date_str, "hut": hut["name"], "bunks": bunks})
 
   openings.sort(key=lambda o: (o["date"], o["hut"]))
   return openings
@@ -280,7 +297,7 @@ def check_track(scraper: "cloudscraper.CloudScraper", track: dict):
       datetime.strptime(START_WINDOW_END, "%Y-%m-%d")
       - datetime.strptime(START_WINDOW_BEGIN, "%Y-%m-%d")
   ).days
-  # Request enough nights to cover the whole window plus one trip length.
+  # Request enough days to cover the whole window plus one trip length.
   request_nights = window_days + track["nights"] + 1
 
   availability = fetch_track_availability(scraper, track, request_nights)
@@ -288,30 +305,54 @@ def check_track(scraper: "cloudscraper.CloudScraper", track: dict):
   if track["require_full_chain"]:
     itineraries = find_full_chain_itineraries(track, availability)
     if itineraries:
-      print(
-          f"   🚨 {track['name']}: {len(itineraries)} full-chain itinerary(ies)!"
-      )
-      title = f"🚨 {track['name'].upper()} OPENING FOUND!"
-      return title, format_full_chain_message(track, itineraries)
+      print(f"   🚨 {track['name']}: {len(itineraries)} full-chain itinerary(ies)!")
+      return (f"🚨 {track['name'].upper()} OPENING FOUND!",
+              format_full_chain_message(track, itineraries))
   else:
     openings = find_single_night_openings(track, availability)
     if openings:
       print(f"   🚨 {track['name']}: {len(openings)} single-night opening(s)!")
-      title = f"🚨 {track['name'].upper()} OPENING FOUND!"
-      return title, format_single_night_message(track, openings)
+      return (f"🚨 {track['name'].upper()} OPENING FOUND!",
+              format_single_night_message(track, openings))
 
   print(f"   ℹ {track['name']}: no qualifying openings.")
   return None
+
+
+def maybe_send_daily_heartbeat(scraper, any_hits: bool) -> None:
+  """Sends a 'still watching' heartbeat when SEND_HEARTBEAT=1.
+
+  Cadence is controlled by the caller/scheduler (the workflow enables this on a
+  once-a-day cron), so no local state file is needed — which is important on
+  ephemeral CI runners where files do not persist between runs.
+  """
+  if not SEND_DAILY_HEARTBEAT:
+    return
+
+  status = "openings found this run" if any_hits else "no openings yet"
+  msg = (
+      f"DOC monitor is alive ✅\n"
+      f"Daily check OK — {status}.\n"
+      f"Window {START_WINDOW_BEGIN} to {START_WINDOW_END}, party of {PARTY_SIZE}.\n"
+      f"Tracks: Milford (3-night chain), Routeburn (1 night)."
+  )
+  send_push_notification(
+      "DOC monitor daily check", msg, scraper,
+      priority="low", tags="white_check_mark,calendar",
+  )
 
 
 def main() -> None:
   scraper = cloudscraper.create_scraper(
       browser={"browser": "chrome", "platform": "linux", "desktop": True}
   )
+  # Prime cookies by touching the booking site first.
+  try:
+    scraper.get("https://bookings.doc.govt.nz/Web/Default.aspx", timeout=30)
+  except Exception:  # noqa: BLE001 - priming is best-effort
+    pass
 
-  print(
-      f"Window: {START_WINDOW_BEGIN} to {START_WINDOW_END}, party of {PARTY_SIZE}\n"
-  )
+  print(f"Window: {START_WINDOW_BEGIN} to {START_WINDOW_END}, party of {PARTY_SIZE}\n")
 
   hits = []
   for track in TRACKS:
@@ -324,6 +365,8 @@ def main() -> None:
       send_push_notification(title, message, scraper)
   else:
     print("\nℹ Check finished: no openings for any monitored track.")
+
+  maybe_send_daily_heartbeat(scraper, any_hits=bool(hits))
 
 
 if __name__ == "__main__":
