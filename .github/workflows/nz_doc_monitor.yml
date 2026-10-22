@@ -6,12 +6,13 @@ on:
     paths:
       - 'nz_doc_monitor.py'
       - '.github/workflows/nz_doc_monitor.yml'
-  # GitHub's own cron is unreliable on private repos (it frequently never fires),
-  # so it is kept only as a best-effort fallback. The primary trigger is an
-  # external scheduler calling repository_dispatch / workflow_dispatch.
-  schedule:
-    - cron: '*/30 * * * *'   # fallback availability check (if GitHub runs it)
-    - cron: '0 19 * * *'     # fallback daily heartbeat (19:00 UTC ~= 08:00 NZDT)
+  # GitHub's own cron is unreliable on private repos (it never fired here), so
+  # scheduling is handled entirely by an external scheduler (cron-job.org)
+  # calling repository_dispatch. The schedule trigger below is disabled; leave
+  # it commented in case GitHub cron is ever needed as a fallback.
+  # schedule:
+  #   - cron: '*/30 * * * *'   # fallback availability check (if GitHub runs it)
+  #   - cron: '0 19 * * *'     # fallback daily heartbeat (19:00 UTC ~= 08:00 NZDT)
   workflow_dispatch:
     inputs:
       send_heartbeat:
