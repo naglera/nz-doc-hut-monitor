@@ -122,6 +122,16 @@ TRACKS = [
             {"facility_id": 2854, "name": "Iris Burn Hut"},
         ],
     },
+    {
+        "key": "waikaremoana",
+        "name": "Lake Waikaremoana Track",
+        "place_id": 878,
+        "nights": 1,
+        "rule": "any_single_night",
+        "ordered_huts": [
+            {"facility_id": 2911, "name": "Panekire Hut"},
+        ],
+    },
 ]
 
 NTFY_TOPIC = os.getenv("NTFY_TOPIC", "REDACTED_TOPIC")
@@ -390,7 +400,8 @@ def maybe_send_daily_heartbeat(scraper, any_hits: bool) -> None:
       f"Daily check OK — {status}.\n"
       f"Window {START_WINDOW_BEGIN} to {START_WINDOW_END}, party of {PARTY_SIZE}.\n"
       f"Tracks: Milford (3-night chain), Routeburn (1 night), "
-      f"Kepler (Luxmore + Iris Burn, 2 consecutive nights)."
+      f"Kepler (Luxmore + Iris Burn, 2 consecutive nights), "
+      f"Lake Waikaremoana (Panekire Hut, 1 night)."
   )
   send_push_notification(
       "DOC monitor daily check", msg, scraper,
