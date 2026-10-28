@@ -100,17 +100,17 @@ TRACKS = [
             {"facility_id": 2858, "name": "Dumpling Hut"},
         ],
     },
-    {
-        "key": "routeburn",
-        "name": "Routeburn Track",
-        "place_id": 874,
-        "nights": 1,
-        "rule": "any_single_night",
-        "ordered_huts": [
-            {"facility_id": 2862, "name": "Routeburn Falls Hut"},
-            {"facility_id": 2861, "name": "Lake Mackenzie Hut"},
-        ],
-    },
+    #{
+    #    "key": "routeburn",
+    #    "name": "Routeburn Track",
+    #    "place_id": 874,
+    #    "nights": 1,
+    #    "rule": "any_single_night",
+    #    "ordered_huts": [
+    #        {"facility_id": 2862, "name": "Routeburn Falls Hut"},
+    #        {"facility_id": 2861, "name": "Lake Mackenzie Hut"},
+    #    ],
+    #},
     {
         "key": "kepler",
         "name": "Kepler Track",
