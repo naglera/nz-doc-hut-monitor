@@ -65,8 +65,8 @@ CUSTOMER_CLASSIFICATION_ID = 0  # public / default pricing class
 PARTY_SIZE = 2
 
 # Shared arrival window for the trip start (inclusive).
-START_WINDOW_BEGIN = "2026-12-28"
-START_WINDOW_END = "2027-01-10"
+START_WINDOW_BEGIN = "2027-01-02"
+START_WINDOW_END = "2027-01-12"
 
 # Send a "still watching" heartbeat notification. On ephemeral CI runners a
 # local state file does not persist between runs, so cadence is controlled by
