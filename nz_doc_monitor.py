@@ -324,7 +324,7 @@ def find_two_huts_consecutive(track: dict, availability: dict) -> list:
   return itineraries
 
 
-
+def format_full_chain_message(track: dict, itineraries: list) -> str:
   lines = [
       f"{track['name']}: found {len(itineraries)} full "
       f"{track['nights']}-night opening(s) for {PARTY_SIZE}p:"

@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'nz_doc_monitor.py'
+      - 'test_nz_doc_monitor.py'
       - '.github/workflows/nz_doc_monitor.yml'
   # GitHub's own cron is unreliable on private repos (it never fired here), so
   # scheduling is handled entirely by an external scheduler (cron-job.org)
@@ -39,6 +40,12 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install "requests>=2.31" "cloudscraper>=1.2.71"
+
+      # Only on code changes: catch crashes in alert handling before they hit a
+      # real opening. Skipped on the 20-minute scheduled checks to keep them fast.
+      - name: Run regression tests
+        if: github.event_name == 'push'
+        run: python -m unittest -v test_nz_doc_monitor
 
       - name: Execute DOC Availability Check
         env:
