@@ -101,7 +101,17 @@ RULE_TRACKS = [
 ]
 
 
-class CheckTrackEveryRuleTest(unittest.TestCase):
+class _TopicSetTest(unittest.TestCase):
+
+  def setUp(self):
+    self._topic = mon.NTFY_TOPIC
+    mon.NTFY_TOPIC = "test-topic"
+
+  def tearDown(self):
+    mon.NTFY_TOPIC = self._topic
+
+
+class CheckTrackEveryRuleTest(_TopicSetTest):
 
   def test_check_track_formats_alert_for_every_rule(self):
     for track in RULE_TRACKS:
@@ -126,7 +136,7 @@ class CheckTrackEveryRuleTest(unittest.TestCase):
       self.assertIn(track["rule"], known, track["key"])
 
 
-class MainEndToEndTest(unittest.TestCase):
+class MainEndToEndTest(_TopicSetTest):
 
   def test_main_sends_one_alert_per_enabled_track(self):
     scraper = FakeScraper(
@@ -142,6 +152,12 @@ class MainEndToEndTest(unittest.TestCase):
     for track in mon.TRACKS:
       self.assertTrue(any(track["name"].upper() in t for t in titles),
                       f"no alert for {track['name']}: {titles}")
+
+  def test_main_exits_when_topic_missing(self):
+    mon.NTFY_TOPIC = ""
+    with self.assertRaises(SystemExit) as ctx:
+      mon.main()
+    self.assertNotEqual(ctx.exception.code, 0)
 
 
 if __name__ == "__main__":

@@ -49,9 +49,9 @@ jobs:
 
       - name: Execute DOC Availability Check
         env:
-          # Override by setting a repository variable named NTFY_TOPIC
-          # (Settings -> Secrets and variables -> Actions -> Variables).
-          NTFY_TOPIC: ${{ vars.NTFY_TOPIC || 'REDACTED_TOPIC' }}
+          # Required repository secret
+          # (Settings -> Secrets and variables -> Actions -> Secrets).
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
           # Send a heartbeat on the daily cron, on a manual run requesting it,
           # or on a repository_dispatch of type "heartbeat".
           SEND_HEARTBEAT: ${{ (github.event.schedule == '0 19 * * *' || github.event.inputs.send_heartbeat == 'true' || github.event.action == 'heartbeat') && '1' || '0' }}

@@ -54,6 +54,7 @@ A night is bookable when, exactly as the website decides:
 from datetime import datetime, timedelta
 import json
 import os
+import sys
 
 import cloudscraper
 
@@ -137,7 +138,9 @@ TRACKS = [
     # },
 ]
 
-NTFY_TOPIC = os.getenv("NTFY_TOPIC", "REDACTED_TOPIC")
+# Required. Set it as the NTFY_TOPIC repository secret. The topic is the only
+# "password" for ntfy.sh, so never commit it.
+NTFY_TOPIC = os.getenv("NTFY_TOPIC", "")
 
 BOOKING_URL = "https://bookings.doc.govt.nz/Web/Default.aspx#!greatwalk-result"
 
@@ -185,7 +188,8 @@ def send_push_notification(
     else:
       print(f"⚠ Notification delivery failed: {response.status_code}")
   except Exception as e:  # noqa: BLE001 - never let notification errors crash the run
-    print(f"⚠ Notification error: {e}")
+    # Print only the type: the message can include the URL, which holds the topic.
+    print(f"⚠ Notification error: {type(e).__name__}")
 
 
 def fetch_track_availability(
@@ -412,6 +416,8 @@ def maybe_send_daily_heartbeat(scraper, any_hits: bool) -> None:
 
 
 def main() -> None:
+  if not NTFY_TOPIC:
+    sys.exit("NTFY_TOPIC is not set. Add it as a repository secret.")
   scraper = cloudscraper.create_scraper(
       browser={"browser": "chrome", "platform": "linux", "desktop": True}
   )
